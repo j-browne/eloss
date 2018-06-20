@@ -35,6 +35,7 @@ impl From<num::ParseFloatError> for Error {
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 struct ValUnc {
     val: f64,
     unc_stat: f64,
@@ -46,9 +47,9 @@ struct RunInfo {
     run_type: RunType,
     start_time: f64,
     stop_time: f64,
-    cap_ic: ValUnc,
-    cap_in: ValUnc,
-    rhoa: ValUnc,
+    cap_ic: Option<ValUnc>,
+    cap_in: Option<ValUnc>,
+    rhoa: Option<ValUnc>,
 }
 
 enum RunType {
@@ -73,13 +74,30 @@ fn get_run_info<P: AsRef<Path>>(filename: P) -> Result<HashMap<String, RunInfo>,
     let data = fs::read_to_string(filename)?;
     for line in data.lines() {
         let x: Vec<_> = line.split_whitespace().collect();
+
+        if x.len() == 0 || x[0].starts_with("#") {
+            continue;
+        }
+
         let run_name = x[0].to_string();
         let run_type = x[1].parse()?;
         let start_time = x[2].parse()?;
         let stop_time = x[3].parse()?;
-        let cap_ic = ValUnc { val: x[4].parse()?, unc_stat: x[5].parse()?, unc_sys: x[6].parse()? };
-        let cap_in = ValUnc { val: x[7].parse()?, unc_stat: x[8].parse()?, unc_sys: x[9].parse()? };
-        let rhoa = ValUnc { val: x[10].parse()?, unc_stat: x[11].parse()?, unc_sys: x[12].parse()? };
+        let cap_ic = if let (Ok(val), Ok(unc_stat), Ok(unc_sys)) = (x[4].parse(), x[5].parse(), x[6].parse()) {
+            Some(ValUnc{ val, unc_stat, unc_sys })
+        } else {
+            None
+        };
+        let cap_in = if let (Ok(val), Ok(unc_stat), Ok(unc_sys)) = (x[7].parse(), x[8].parse(), x[9].parse()) {
+            Some(ValUnc{ val, unc_stat, unc_sys })
+        } else {
+            None
+        };
+        let rhoa = if let (Ok(val), Ok(unc_stat), Ok(unc_sys)) = (x[10].parse(), x[11].parse(), x[12].parse()) {
+            Some(ValUnc{ val, unc_stat, unc_sys })
+        } else {
+            None
+        };
         run_info.insert(run_name, RunInfo{run_type, start_time, stop_time, cap_ic, cap_in, rhoa});
     }
     Ok(run_info)
@@ -260,6 +278,14 @@ impl Setup {
         }
     }
 
+    pub fn set_proj_1(&mut self, p: Projectile) {
+        self.proj_1 = p
+    }
+
+    pub fn set_proj_2(&mut self, p: Projectile) {
+        self.proj_2 = p
+    }
+
     fn calculate(&self) -> Vec<f64> {
         let mut e_losses = vec![];
         let mut e_diff = 0.0;
@@ -282,11 +308,44 @@ fn main() -> Result<(), Error> {
     let mut setup = Setup::new(Projectile::new("34Ar", 55.4), Projectile::new("34Ar", 55.4), 15.0, 1e19);
     let run_info = get_run_info("run_info.txt")?;
     for (name, info) in run_info {
-        let rhoa = info.rhoa.val;
-        let ic_press = info.cap_ic.val;
-        setup.set_jet_rhoa(rhoa);
-        setup.set_ic_press(ic_press);
-        println!("{}: {:?}", name, setup.calculate());
+        for proj in &[
+        Projectile::new("34S", 54.170),
+        Projectile::new("34Cl", 54.179),
+        Projectile::new("34Ar", 54.190),
+        ] {
+            setup.set_proj_1(proj.clone());
+            setup.set_proj_2(proj.clone());
+            if let (Some(rhoa_val_unc), Some(ic_press_val_unc)) = (info.rhoa.as_ref(), info.cap_ic.as_ref()) {
+                let mut xs = Vec::new();
+                let mut ys = Vec::new();
+                let mut des = Vec::new();
+                let mut es = Vec::new();
+                for (rhoa, ic_press) in &[
+                    (rhoa_val_unc.val, ic_press_val_unc.val),
+                    (rhoa_val_unc.val + rhoa_val_unc.unc_sys, ic_press_val_unc.val + ic_press_val_unc.unc_sys),
+                    (rhoa_val_unc.val - rhoa_val_unc.unc_sys, ic_press_val_unc.val - ic_press_val_unc.unc_sys)
+                ] {
+                    setup.set_jet_rhoa(*rhoa);
+                    setup.set_ic_press(*ic_press);
+                    let elosses = setup.calculate();
+                    xs.push(elosses[4]);
+                    ys.push(elosses[5]);
+                    des.push(elosses[6]);
+                    es.push(elosses[7]);
+                }
+                let x = ValUnc { val: xs[0], unc_stat: 0.0, unc_sys: f64::max(f64::abs(xs[1] - xs[0]), f64::abs(xs[2] - xs[0]))};
+                let y = ValUnc { val: ys[0], unc_stat: 0.0, unc_sys: f64::max(f64::abs(ys[1] - ys[0]), f64::abs(ys[2] - ys[0]))};
+                let de = ValUnc { val: des[0], unc_stat: 0.0, unc_sys: f64::max(f64::abs(des[1] - des[0]), f64::abs(des[2] - des[0]))};
+                let e = ValUnc { val: es[0], unc_stat: 0.0, unc_sys: f64::max(f64::abs(es[1] - es[0]), f64::abs(es[2] - es[0]))};
+
+                for chan in 0..32 {
+                    println!("{}\tX\t{}\t{}\t{}\t{}", name, chan, proj.nuc(), x.val * 1000.0, x.unc_sys * 1000.0);
+                    println!("{}\tY\t{}\t{}\t{}\t{}", name, chan, proj.nuc(), y.val * 1000.0, y.unc_sys * 1000.0);
+                }
+                println!("{}\tdE\t0\t{}\t{}\t{}", name, proj.nuc(), de.val * 1000.0, de.unc_sys * 1000.0);
+                println!("{}\tE\t0\t{}\t{}\t{}", name, proj.nuc(), e.val * 1000.0, e.unc_sys * 1000.0);
+            }
+        }
     }
 
     Ok(())
