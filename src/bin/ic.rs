@@ -3,6 +3,10 @@ extern crate eloss;
 use eloss::eloss;
 use std::iter::repeat;
 use eloss::MOLAR_MASSES;
+use std::{fs, io, num};
+use std::path::Path;
+use std::collections::HashMap;
+use std::str::FromStr;
 
 const IC_TEMP: f64 = 300.0; // K
 const JET_DIST: f64 = 0.3; // cm
@@ -12,11 +16,77 @@ const MYLAR_DENSITY: f64 = 1.39; // g/cm^3
 const REACTION_LOCATION: f64 = 0.5;
 
 #[derive(Debug, Clone)]
-enum Error {}
+enum Error {
+    IO,
+    ParseFloatError(num::ParseFloatError),
+    ParseRunTypeError,
+}
 
+impl From<io::Error> for Error {
+    fn from(_e: io::Error) -> Self {
+        Error::IO
+    }
+}
+
+impl From<num::ParseFloatError> for Error {
+    fn from(e: num::ParseFloatError) -> Self {
+        Error::ParseFloatError(e)
+    }
+}
+
+#[allow(dead_code)]
+struct ValUnc {
+    val: f64,
+    unc_stat: f64,
+    unc_sys: f64,
+}
+
+#[allow(dead_code)]
+struct RunInfo {
+    run_type: RunType,
+    start_time: f64,
+    stop_time: f64,
+    cap_ic: ValUnc,
+    cap_in: ValUnc,
+    rhoa: ValUnc,
+}
+
+enum RunType {
+    Run(f64),
+    NozTest,
+}
+
+impl FromStr for RunType {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "1.625" | "1.71" => Ok(RunType::Run(s.parse().or(Err(Error::ParseRunTypeError))?)),
+            "noz_test" => Ok(RunType::NozTest),
+            _ => Err(Error::ParseRunTypeError),
+        }
+    }
+}
+
+fn get_run_info<P: AsRef<Path>>(filename: P) -> Result<HashMap<String, RunInfo>, Error> {
+    let mut run_info = HashMap::new();
+    let data = fs::read_to_string(filename)?;
+    for line in data.lines() {
+        let x: Vec<_> = line.split_whitespace().collect();
+        let run_name = x[0].to_string();
+        let run_type = x[1].parse()?;
+        let start_time = x[2].parse()?;
+        let stop_time = x[3].parse()?;
+        let cap_ic = ValUnc { val: x[4].parse()?, unc_stat: x[5].parse()?, unc_sys: x[6].parse()? };
+        let cap_in = ValUnc { val: x[7].parse()?, unc_stat: x[8].parse()?, unc_sys: x[9].parse()? };
+        let rhoa = ValUnc { val: x[10].parse()?, unc_stat: x[11].parse()?, unc_sys: x[12].parse()? };
+        run_info.insert(run_name, RunInfo{run_type, start_time, stop_time, cap_ic, cap_in, rhoa});
+    }
+    Ok(run_info)
+}
 
 #[derive(Debug, Clone)]
-pub struct Projectile {
+struct Projectile {
     nuc: &'static str,
     energy: f64,
 }
@@ -40,7 +110,7 @@ impl Projectile {
 }
 
 #[derive(Debug, Clone)]
-pub struct Target {
+struct Target {
     material: &'static str,
     /// mg/cm^2
     thickness: f64,
@@ -210,13 +280,13 @@ impl Setup {
 
 fn main() -> Result<(), Error> {
     let mut setup = Setup::new(Projectile::new("34Ar", 55.4), Projectile::new("34Ar", 55.4), 15.0, 1e19);
-
-    for rhoa in &[5e18, 1e19] {
-        setup.set_jet_rhoa(*rhoa);
-        for ic_press in &[14.0, 15.0, 16.0] {
-            setup.set_ic_press(*ic_press);
-            println!("{:?}", setup.calculate());
-        }
+    let run_info = get_run_info("run_info.txt")?;
+    for (name, info) in run_info {
+        let rhoa = info.rhoa.val;
+        let ic_press = info.cap_ic.val;
+        setup.set_jet_rhoa(rhoa);
+        setup.set_ic_press(ic_press);
+        println!("{}: {:?}", name, setup.calculate());
     }
 
     Ok(())
