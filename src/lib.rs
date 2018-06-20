@@ -1,17 +1,12 @@
-#![feature(proc_macro, specialization)]
-
 #[macro_use]
 extern crate lazy_static;
-extern crate pyo3;
-use pyo3::prelude::*;
-use pyo3::py::modinit;
 use interpolation::interpolate;
 use std::collections::HashMap;
 
 mod interpolation;
 
 lazy_static! {
-    static ref STOPPING_POWERS: HashMap<String, (Vec<f64>, Vec<f64>)> = {
+    pub static ref STOPPING_POWERS: HashMap<String, (Vec<f64>, Vec<f64>)> = {
         let mut map = HashMap::new();
         for (proj, targ, input) in [
             ("34S", "Butane", include_str!("data/34S_butane.txt")),
@@ -45,7 +40,14 @@ lazy_static! {
         }
         map
     };
-    static ref MASSES: HashMap<String, f64> = {
+    pub static ref MOLAR_MASSES: HashMap<String, f64> = {
+        let mut map = HashMap::new();
+        map.insert("Butane".to_string(), 58.0);
+        map.insert("Mylar".to_string(), 192.0);
+        map.insert("He".to_string(), 4.0);
+        map
+    };
+    pub static ref MASSES: HashMap<String, f64> = {
         let mut map = HashMap::new();
         map.insert("34S".to_string(), 33.967867012);
         map.insert("34Cl".to_string(), 33.973762491);
@@ -79,18 +81,4 @@ pub fn eloss(proj: &str, e: f64, targ: &str, thick: f64) -> f64 {
     }
 
     e - energy_u * mass
-}
-
-#[modinit(eloss)]
-fn init_mod(py: Python, m: &PyModule) -> PyResult<()> {
-
-    #[pyfn(m, "eloss")]
-    // ``#[pyfn()]` converts the arguments from Python objects to Rust values
-    // and the Rust return value back into a Python object.
-    fn eloss_py(proj: &str, e: f64, targ: &str, thick: f64) -> PyResult<f64> {
-       let out = eloss(proj, e, targ, thick);
-       Ok(out)
-    }
-
-    Ok(())
 }

@@ -3,13 +3,5 @@ name = "eloss"
 version = "0.1.0"
 authors = ["Justin Browne <jebdude89@gmail.com>"]
 
-[lib]
-name = "eloss"
-crate-type = ["cdylib"]
-
 [dependencies]
 lazy_static = "1.0.1"
-
-[dependencies.pyo3]
-version = "0.2"
-features = ["extension-module"]
